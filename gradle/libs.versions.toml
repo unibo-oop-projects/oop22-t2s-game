@@ -1,0 +1,16 @@
+[versions]
+junit5 = "5.9.2"
+
+[libraries]
+junit4 = "junit:junit:4.13.2"
+junit-jupiter-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit5" }
+junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit5" }
+junit-vintage-engine = { module = "org.junit.vintage:junit-vintage-engine", version.ref = "junit5" }
+
+[bundles]
+junit-compile = [ "junit-jupiter-api", "junit4" ]
+junit-runtime = [ "junit-jupiter-engine", "junit-vintage-engine" ]
+
+[plugins]
+java-qa = "org.danilopianini.gradle-java-qa:0.43.0"
+taskTree = "com.dorongold.task-tree:2.1.1"

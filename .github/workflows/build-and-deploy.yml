@@ -1,0 +1,116 @@
+name: CI/CD Process
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  branch:
+    runs-on: ubuntu-22.04
+    outputs:
+      is_default: ${{ steps.branch-name.outputs.is_default }}
+    steps:
+      - name: Get branch name
+        id: branch-name
+        uses: tj-actions/branch-names@v6
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+       version_tag: ${{ steps.version.outputs.version_tag }}
+    steps:
+      - name: Checkout
+        uses: DanySK/action-checkout@0.2.5
+      - uses: paulhatch/semantic-version@v5.0.3
+        id: version
+        with:
+          tag_prefix: ""
+          major_pattern: '/\w+(\(\w+\))?\!:\s.+/'
+          minor_pattern: '/feat(\(\w+\))?:\s.+/'
+          version_format: "${major}.${minor}.${patch}-dev${increment}"
+          namespace: 'grading'
+          bump_each_commit: true
+          search_commit_body: false
+      - run: '[ -n "${{ steps.version.outputs.version_tag }}" ]'
+  build:
+    strategy:
+      matrix:
+        os: [ windows-2022, macos-12, ubuntu-22.04 ]
+    runs-on: ${{ matrix.os }}
+    needs:
+      - version
+      - branch
+    concurrency:
+      group: ${{ github.workflow }}-build-${{ matrix.os }}-${{ github.event.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: DanySK/action-checkout@0.2.5
+      - uses: DanySK/build-check-deploy-gradle-action@2.1.23
+        with:
+          check-command: ./gradlew blame
+          should-run-codecov: false
+          should-deploy: false
+      - name: Release
+        if: contains('Linux', runner.os) && needs.branch.outputs.is_default
+        uses: ncipollo/release-action@v1.12.0
+        with:
+          tag: ${{ needs.version.outputs.version_tag }}
+          artifacts: "**/*blame*.md"
+          allowUpdates: true
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+  anti-plagiarism:
+    runs-on: ubuntu-22.04
+    needs:
+      - version
+      - branch
+    concurrency:
+      group: ${{ github.workflow }}-anti-plagiarism-${{ github.event.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Compute the version of the detector
+        id: version
+        shell: bash
+        run: |
+          USES=$(cat <<TRICK_RENOVATE
+          - uses: DanySK/code-plagiarism-detector@7.0.1
+          TRICK_RENOVATE
+          )
+          echo "Scripts update line: \"$USES\""
+          echo "Computed version: \"${USES#*@}\""
+          echo "version=${USES#*@}" >> $GITHUB_OUTPUT
+      - name: Download
+        run: curl -sL https://github.com/DanySK/code-plagiarism-detector/releases/download/${{ steps.version.outputs.version }}/code-plagiarism-detector-${{ steps.version.outputs.version }}-all.jar -o plagiarism.jar
+      - name: Run
+        env:
+          BB_USER: danysk
+          BB_TOKEN: ${{ secrets.BB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p plagiarism-report
+          java -jar plagiarism.jar --output-dir plagiarism-report \
+            submission \
+              --service github:${{ github.repository_owner }}/${{ github.event.repository.name }} \
+            corpus \
+              --service github:unibo-oop-projects,bitbucket:danysk/oop1,github:AlmasB/FXGLGames,github:oakes/libgdx-examples
+      - name: Release
+        if: needs.branch.outputs.is_default
+        uses: ncipollo/release-action@v1.12.0
+        with:
+          tag: ${{ needs.version.outputs.version_tag }}
+          artifacts: "plagiarism-report/*"
+          allowUpdates: true
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+  success:
+    runs-on: ubuntu-22.04
+    needs:
+      - build
+      - anti-plagiarism
+    if: >-
+      always() && (
+        contains(join(needs.*.result, ','), 'failure')
+        || !contains(join(needs.*.result, ','), 'cancelled')
+      )
+    steps:
+      - name: Verify that there were no failures
+        run: ${{ !contains(join(needs.*.result, ','), 'failure') }}
