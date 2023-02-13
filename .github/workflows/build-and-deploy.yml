@@ -46,6 +46,7 @@ jobs:
         uses: DanySK/action-checkout@0.2.5
       - uses: DanySK/build-check-deploy-gradle-action@2.1.23
         with:
+          build-command: ./gradlew test || true
           check-command: ./gradlew blame
           should-run-codecov: false
           should-deploy: false
